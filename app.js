@@ -1,14 +1,14 @@
 const express = require("express");
-const {con,jwtSecret} = require('./database')// Import database connection
+const {con,jwtSecret,transporter} = require('./database')// Import database connection
 const bodyParser = require("body-parser");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const { v4: uuidv4 } = require("uuid"); 
 
 
 const app = express();
 app.use(bodyParser.json());
 const port = 3000;
-
 
 
 
@@ -97,8 +97,73 @@ const authenticate = (req, res, next) => {
   
 
 
+// Step 3: Forgot Password API
+app.post("/forgot-password", async (req, res) => {
+  const { email } = req.body;
 
-// // routes for crud operations  
+  try {
+    const result = await con.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const user = result.rows[0];
+    const token = uuidv4(); // Generate reset token
+
+    await con.query("INSERT INTO reset_password (email, token) VALUES ($1, $2)", [email, token]);
+
+    // Generate Reset Link
+    const resetLink = `http://localhost:3000/reset-password/${token}`;
+    console.log(`Reset Link: ${resetLink}`); // Debugging
+
+    // Send Email with Reset Link
+    await transporter.sendMail({
+      to: email,
+      subject: "Password Reset Request",
+      text: `Click the following link to reset your password: ${resetLink}`,
+    });
+
+    res.json({ message: "Password reset link sent to your email." });
+  } catch (error) {
+    console.error("Error in forgot-password:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Step 4: Reset Password API
+app.post("/reset-password/:token", async (req, res) => {
+  const { token } = req.params;
+  const { newPassword } = req.body;
+
+  try {
+    // Check if token exists
+    const result = await con.query("SELECT * FROM reset_password WHERE token = $1", [token]);
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: "Invalid or expired token" });
+    }
+
+    const email = result.rows[0].email;
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update user's password in the database
+    await con.query("UPDATE users SET password = $1 WHERE email = $2", [hashedPassword, email]);
+
+    // Remove token from the reset_password table
+    // await con.query("DELETE FROM reset_password WHERE token = $1", [token]);
+    await con.query("UPDATE reset_password SET used = TRUE WHERE token = $1", [token]);
+
+
+    res.json({ message: "Password has been reset successfully!" });
+  } catch (error) {
+    console.error("Error in reset-password:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+
+
+// routes for tasks 
 
 
 //create
@@ -178,7 +243,8 @@ app.post("/tasks", authenticate, async (req, res) => {
   
 
 
-  
+
+
 
 
 app.listen(port, () => {

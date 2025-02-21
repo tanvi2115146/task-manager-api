@@ -1,5 +1,7 @@
 import dotenv from 'dotenv'
 import pkg from 'pg';
+import nodemailer from "nodemailer";
+
 
 dotenv.config();
 
@@ -14,7 +16,16 @@ const con = new Client({
        
 });
 
+// Nodemailer Transporter
+const transporter = nodemailer.createTransport({
+    service: "Gmail",
+    auth: {
+      user: process.env.EMAIL_USER, 
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+
 con.connect().then((console.log("connected")));
 
 const jwtSecret = process.env.JWTSECRET;
-export {con, jwtSecret};
+export {con, jwtSecret,transporter};
