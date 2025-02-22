@@ -15,26 +15,20 @@ const port = 3000;
 //user register
 
 app.post("/register", async (req, res) => {
-    const { name, email, password } = req.body;
+  const { name, email, password, role } = req.body; // Include role
+
+  const userExists = await con.query("SELECT * FROM users WHERE email = $1", [email]);
+  if (userExists.rows.length > 0) {
+    return res.status(400).json({ message: "User already exists" });
+  }
   
-    try {
-      // Check if user exists
-      const userExists = await con.query("SELECT * FROM users WHERE email = $1", [
-        email,
-      ]);
-      if (userExists.rows.length > 0) {
-        return res.status(400).json({ message: "User already exists" });
-      }
+  const hashedPassword = await bcrypt.hash(password, 10);
   
-      // Hash password
-      const hashedPassword = await bcrypt.hash(password, 10);
-  
-      // Insert user
-      const newUser = await con.query(
-        "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING *",
-        [name, email, hashedPassword]
-      );
-  
+  const newUser = await con.query(
+    "INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING *",
+    [name, email, hashedPassword, role || 'user'] // Default to 'user'
+  );
+  try {
       res.status(201).json({ message: "User registered", user: newUser.rows[0] });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -94,7 +88,23 @@ const authenticate = (req, res, next) => {
     }
 };
 
-  
+
+
+//admin middleware
+const isAdmin = async (req, res, next) => {
+  try {
+      const user = await con.query("SELECT role FROM users WHERE id = $1", [req.user.id]);
+      if (user.rows.length > 0 && user.rows[0].role === "admin") {
+          next(); // Admin is allowed
+      } else {
+          res.status(403).json({ message: "Access denied. Admins only." });
+      }
+  } catch (error) {
+      res.status(500).json({ error: "Error checking admin role" });
+  }
+};
+
+
 
 
 // Step 3: Forgot Password API
@@ -130,6 +140,9 @@ app.post("/forgot-password", async (req, res) => {
   }
 });
 
+
+
+
 // Step 4: Reset Password API
 app.post("/reset-password/:token", async (req, res) => {
   const { token } = req.params;
@@ -145,7 +158,6 @@ app.post("/reset-password/:token", async (req, res) => {
     const email = result.rows[0].email;
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update user's password in the database
     await con.query("UPDATE users SET password = $1 WHERE email = $2", [hashedPassword, email]);
 
     // Remove token from the reset_password table
@@ -166,80 +178,131 @@ app.post("/reset-password/:token", async (req, res) => {
 // routes for tasks 
 
 
-//create
+//create task
 app.post("/tasks", authenticate, async (req, res) => {
-    const { title, description } = req.body;
-  
-    try {
+  const { title, description, assignedUserId } = req.body;
+
+  try {
+      // Check if the logged-in user is an admin
+      const userRole = await con.query("SELECT role FROM users WHERE id = $1", [req.user.id]);
+      if (userRole.rows[0].role !== "admin") {
+          return res.status(403).json({ message: "Access denied. Only admins can create tasks." });
+      }
+
+      // Assign task to specified user or default to admin
+      const userId = assignedUserId || req.user.id; 
+
       const newTask = await con.query(
-        "INSERT INTO tasks (title, description, user_id) VALUES ($1, $2, $3) RETURNING *",
-        [title, description, req.user.id]
+          "INSERT INTO tasks (title, description, user_id) VALUES ($1, $2, $3) RETURNING *",
+          [title, description, userId]
       );
-  
-      res.status(201).json({ message: "Task created", task: newTask.rows[0] });
-    } catch (error) {
+
+      res.status(201).json({ message: "Task created successfully", task: newTask.rows[0] });
+  } catch (error) {
       res.status(500).json({ error: error.message });
-    }
-  });
+  }
+});
+
 
 
 //get all tasks
 
-  app.get("/tasks", authenticate, async (req, res) => {
-    try {
-      const tasks = await con.query(
-        "SELECT * FROM tasks WHERE user_id = $1",
-        [req.user.id]
-      );
-  
+app.get("/tasks", authenticate, async (req, res) => {
+  try {
+      let tasks;
+
+      const userRole = await con.query("SELECT role FROM users WHERE id = $1", [req.user.id]);
+      if (userRole.rows[0].role === "admin") {
+          // Admin sees all tasks
+          tasks = await con.query("SELECT * FROM tasks");
+      } else {
+          // Users see only their tasks
+          tasks = await con.query("SELECT * FROM tasks WHERE user_id = $1", [req.user.id]);
+      }
+
       res.status(200).json({ tasks: tasks.rows });
-    } catch (error) {
+  } catch (error) {
       res.status(500).json({ error: error.message });
-    }
-  });
+  }
+});
+
 
 
   //update
   app.put("/tasks/:id", authenticate, async (req, res) => {
     const { id } = req.params;
-    const { title, description, status } = req.body;
-  
-    try {
-      const updatedTask = await con.query(
-        "UPDATE tasks SET title = $1, description = $2, status = $3 WHERE id = $4 AND user_id = $5 RETURNING *",
-        [title, description, status, id, req.user.id]
-      );
-  
-      if (updatedTask.rows.length === 0) {
-        return res.status(404).json({ message: "Task not found" });
-      }
-  
-      res.status(200).json({ message: "Task updated", task: updatedTask.rows[0] });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-  
+    const { status, title, description } = req.body;
 
-  //delete
+    try {
+        // Get the user's role
+        const userRole = await con.query("SELECT role FROM users WHERE id = $1", [req.user.id]);
+        const isAdmin = userRole.rows[0].role === "admin";
+
+        if (isAdmin) {
+            // Admin can update any task field (title, description, status)
+            const updatedTask = await con.query(
+                "UPDATE tasks SET title = $1, description = $2, status = $3 WHERE id = $4 RETURNING *",
+                [title, description, status, id]
+            );
+
+            if (updatedTask.rows.length === 0) {
+                return res.status(404).json({ message: "Task not found" });
+            }
+
+            return res.status(200).json({ message: "Task updated", task: updatedTask.rows[0] });
+        } else {
+            // Regular users can ONLY update the status
+            if (title || description) {
+                return res.status(400).json({ message: "Only status can be managed by regular users." });
+            }
+
+            if (!status) {
+                return res.status(400).json({ message: "Status is required to update." });
+            }
+
+            const updatedTask = await con.query(
+                "UPDATE tasks SET status = $1 WHERE id = $2 AND user_id = $3 RETURNING *",
+                [status, id, req.user.id]
+            );
+
+            if (updatedTask.rows.length === 0) {
+                return res.status(404).json({ message: "Task not found or unauthorized update." });
+            }
+
+            return res.status(200).json({ message: "Task status updated", task: updatedTask.rows[0] });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+  
+//delete
   app.delete("/tasks/:id", authenticate, async (req, res) => {
     const { id } = req.params;
-  
+
     try {
-      const deletedTask = await con.query(
-        "DELETE FROM tasks WHERE id = $1 AND user_id = $2 RETURNING *",
-        [id, req.user.id]
-      );
-  
-      if (deletedTask.rows.length === 0) {
-        return res.status(404).json({ message: "Task not found" });
-      }
-  
-      res.status(200).json({ message: "Task deleted" });
+        // Check if the logged-in user is an admin
+        const userRole = await con.query("SELECT role FROM users WHERE id = $1", [req.user.id]);
+        if (userRole.rows[0].role !== "admin") {
+            return res.status(403).json({ message: "Access denied. Only admins can delete tasks." });
+        }
+
+        // Admin can delete any task
+        const deletedTask = await con.query("DELETE FROM tasks WHERE id = $1 RETURNING *", [id]);
+
+        if (deletedTask.rows.length === 0) {
+            return res.status(404).json({ message: "Task not found" });
+        }
+
+        res.status(200).json({ message: "Task deleted successfully" });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+        res.status(500).json({ error: error.message });
     }
-  });
+});
+
+
   
 
 
