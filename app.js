@@ -17,26 +17,32 @@ app.use(cors());
 //user register
 
 app.post("/register", async (req, res) => {
-  const { name, email, password, role } = req.body; // Include role
-
-  const userExists = await con.query("SELECT * FROM users WHERE email = $1", [email]);
-  if (userExists.rows.length > 0) {
-    return res.status(400).json({ message: "User already exists" });
-  }
-  
-  const hashedPassword = await bcrypt.hash(password, 10);
-  
-  const newUser = await con.query(
-    "INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING *",
-    [name, email, hashedPassword, role || 'user'] // Default to 'user'
-  );
   try {
-      res.status(201).json({ message: "User registered", user: newUser.rows[0] });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+    const { name, email, password, role } = req.body; // Include role
+
+    const userExists = await con.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (userExists.rows.length > 0) {
+      return res.status(400).json({ error: "User already exists" }); 
     }
-  });
-  
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const newUser = await con.query(
+      "INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING *",
+      [name, email, hashedPassword, role || 'user'] 
+    );
+
+    // Success response
+    res.status(201).json({ message: "User registered successfully", user: newUser.rows[0] });
+
+  } catch (error) {
+    console.error("Error registering user:", error); // Log error for debugging
+    res.status(500).json({ error: "Internal server error" }); // Standardized error response
+  }
+});
+
+
+
 
 
  //login

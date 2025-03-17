@@ -8,10 +8,14 @@ import UserList from "./components/Auth/UserList";
 import AddTask from "./components/Auth/AddTask";
 import UpdateTask from "./components/Auth/UpdateTask";
 import UpdateStatus from "./components/Auth/UpdateStatus";
+import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+
 
 function App() {
   return (
     <Router>
+      <ToastContainer />
       <Routes>
         
         <Route path="/login" element={<Login />} />
