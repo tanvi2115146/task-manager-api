@@ -10,6 +10,8 @@ const app = express();
 app.use(bodyParser.json());
 const port = 3000;
 
+const cors = require("cors");
+app.use(cors());
 
 
 //user register
@@ -58,9 +60,12 @@ app.post("/login", async (req, res) => {
       }
   
       // Generate token
-      const token = jwt.sign({ id: user.rows[0].id }, jwtSecret, {
-        expiresIn: "1h",
-      });
+      const token = jwt.sign(
+        { id: user.rows[0].id, role: user.rows[0].role },
+        jwtSecret,
+        { expiresIn: "1h" }
+      );
+      
   
       res.status(200).json({ message: "Logged in successfully", token });
     } catch (error) {
@@ -214,10 +219,20 @@ app.get("/tasks", authenticate, async (req, res) => {
       const userRole = await con.query("SELECT role FROM users WHERE id = $1", [req.user.id]);
       if (userRole.rows[0].role === "admin") {
           // Admin sees all tasks
-          tasks = await con.query("SELECT * FROM tasks");
+          tasks = await con.query(`
+            SELECT tasks.id, tasks.title, tasks.description, tasks.status, tasks.user_id, users.name AS username
+            FROM tasks
+            JOIN users ON tasks.user_id = users.id
+        `);
+
       } else {
           // Users see only their tasks
-          tasks = await con.query("SELECT * FROM tasks WHERE user_id = $1", [req.user.id]);
+          tasks = await con.query(`
+            SELECT tasks.id, tasks.title, tasks.description, tasks.status, tasks.user_id, users.name AS username
+            FROM tasks
+            JOIN users ON tasks.user_id = users.id
+            WHERE tasks.user_id = $1
+        `, [req.user.id]);
       }
 
       res.status(200).json({ tasks: tasks.rows });
@@ -226,6 +241,16 @@ app.get("/tasks", authenticate, async (req, res) => {
   }
 });
 
+//get all registered users 
+
+app.get("/users", authenticate, isAdmin, async (req, res) => {
+  try {
+      const users = await con.query("SELECT id, name, email, role FROM users");
+      res.status(200).json({ users: users.rows });
+  } catch (error) {
+      res.status(500).json({ error: error.message });
+  }
+});
 
 
   //update
